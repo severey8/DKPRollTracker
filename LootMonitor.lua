@@ -93,15 +93,111 @@ local function IsBagItemTradable(info)
     return IsItemLinkTradable(info.hyperlink)
 end
 
+local function NormalizeName(name)
+    if not name then
+        return nil
+    end
+    local cleanName = name:match("^(.-)%-") or name
+    return cleanName:gsub("^%l", string.upper)
+end
+
+local function GetTradePartnerName()
+    local partner
+    if _G.TradeFrameRecipientName and _G.TradeFrameRecipientName.GetText then
+        partner = _G.TradeFrameRecipientName:GetText()
+    end
+    if not partner or partner == "" then
+        partner = UnitName("target")
+    end
+    return NormalizeName(partner)
+end
+
+local function GetContainerItemLinkSafe(bag, slot)
+    if C_Container and C_Container.GetContainerItemLink then
+        return C_Container.GetContainerItemLink(bag, slot)
+    elseif GetContainerItemLink then
+        return GetContainerItemLink(bag, slot)
+    end
+    return nil
+end
+
+local function GetItemIDFromLink(link)
+    return link and tonumber(string.match(link, "item:(%d+):"))
+end
+
+local function FindBagSlotForItemLink(itemLink)
+    if not itemLink then
+        return nil
+    end
+
+    local targetID = GetItemIDFromLink(itemLink)
+    for bag = 0, 4 do
+        for slot = 1, C_Container.GetContainerNumSlots(bag) do
+            local link = GetContainerItemLinkSafe(bag, slot)
+            if link then
+                if link == itemLink then
+                    return bag, slot
+                end
+                if targetID and GetItemIDFromLink(link) == targetID then
+                    return bag, slot
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function AutoPlaceTradeItem(itemLink)
+    local bag, slot = FindBagSlotForItemLink(itemLink)
+    if not bag then
+        return false
+    end
+
+    if CursorHasItem and CursorHasItem() then
+        ClearCursor()
+    end
+
+    PickupContainerItem(bag, slot)
+    return true
+end
+
+local function AutoPlaceTradeHistoryItem()
+    if not DB or not DB.AutoPlaceTradeItem or not DB.WinnerHistory then
+        return
+    end
+
+    local partner = GetTradePartnerName()
+    if not partner or partner == "" then
+        return
+    end
+
+    for i = #DB.WinnerHistory, 1, -1 do
+        local entry = DB.WinnerHistory[i]
+        if entry and entry.name == partner and entry.itemLink then
+            if AutoPlaceTradeItem(entry.itemLink) then
+                print("|cffffff00DKP:|r Auto-placing " .. entry.itemLink .. " for trade with " .. partner)
+            else
+                print("|cffffff00DKP:|r Could not find " .. (entry.itemLink or entry.name) .. " in bags for trade.")
+            end
+            return
+        end
+    end
+end
+
 local function RefreshLootWindow()
-    if type(CreateRollMenu) == "function" then
-        CreateRollMenu()
-    else
+    if type(CreateRollMenu) ~= "function" then
         print("|cffff0000DKP Error:|r Main tracker function 'CreateRollMenu' not found. Ensure it is not 'local'.")
         return
     end
 
-    if RollMenuFrame then
+    CreateRollMenu()
+
+    if not RollMenuFrame or type(RollMenuFrame.ShowRightTab) ~= "function" then
+        RollMenuFrame = nil
+        CreateRollMenu()
+    end
+
+    if RollMenuFrame and type(RollMenuFrame.ShowRightTab) == "function" then
         RollMenuFrame:ShowRightTab("Loot")
         RollMenuFrame:RefreshLootPanel()
         RollMenuFrame:RefreshAwardPanel()
@@ -190,20 +286,27 @@ end
 
 local e = CreateFrame("Frame")
 e:RegisterEvent("LOOT_OPENED")
-e:SetScript("OnEvent", function()
-    local tempLoot = {}
-    for i = 1, GetNumLootItems() do
-        local texture, name, _, _, rarity = GetLootSlotInfo(i)
-        local link = GetLootSlotLink(i)
-        if rarity and rarity >= 4 and name and link and IsItemLinkTradable(link) then
-            if tempLoot[name] then
-                tempLoot[name].count = tempLoot[name].count + 1
-            else
-                tempLoot[name] = { name = name, link = link, texture = texture, count = 1 }
+e:RegisterEvent("TRADE_SHOW")
+e:SetScript("OnEvent", function(_, event)
+    if event == "LOOT_OPENED" then
+        local tempLoot = {}
+        for i = 1, GetNumLootItems() do
+            local texture, name, _, _, rarity = GetLootSlotInfo(i)
+            local link = GetLootSlotLink(i)
+            if rarity and rarity >= 4 and name and link and IsItemLinkTradable(link) then
+                if tempLoot[name] then
+                    tempLoot[name].count = tempLoot[name].count + 1
+                else
+                    tempLoot[name] = { name = name, link = link, texture = texture, count = 1 }
+                end
             end
         end
+        CurrentLoot = {}
+        for _, data in pairs(tempLoot) do table.insert(CurrentLoot, data) end
+        if #CurrentLoot > 0 and ((RollMenuFrame and RollMenuFrame:IsShown()) or (DB and DB.AutoOpenLootWindow)) then
+            UpdateLootList()
+        end
+    elseif event == "TRADE_SHOW" then
+        AutoPlaceTradeHistoryItem()
     end
-    CurrentLoot = {}
-    for _, data in pairs(tempLoot) do table.insert(CurrentLoot, data) end
-    if #CurrentLoot > 0 then UpdateLootList() end
 end)

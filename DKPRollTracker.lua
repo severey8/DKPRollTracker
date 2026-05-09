@@ -29,12 +29,15 @@ addonLoaded:SetScript("OnEvent", function(self, event, name)
     DB = DKPRollTrackerDB
     DB.DKPValues = DB.DKPValues or {}
     DB.AwardHistory = DB.AwardHistory or {}
+    DB.WinnerHistory = DB.WinnerHistory or {}
     DB.Costs = DB.Costs or {
         Normal = { Tier = 40, BIS = 80, NonTier = 20 },
         Heroic = { Tier = 60, BIS = 120, NonTier = 30 },
         Mythic = { Tier = 100, BIS = 200, NonTier = 50 },
     }
     DB.WindowPosition = DB.WindowPosition or { point = "CENTER", relativePoint = "CENTER", x = 0, y = 0 }
+    DB.AutoOpenLootWindow = DB.AutoOpenLootWindow or false
+    DB.AutoPlaceTradeItem = DB.AutoPlaceTradeItem or false
     addonInitialized = true
 end)
 
@@ -42,7 +45,7 @@ end)
 -- 2. Roll Storage (TAINT-SAFE DETECTION)
 ---------------------------------------------------------
 RollLog = { [100] = {}, [99] = {}, [98] = {}, [97] = {} }
-local CategoryNames = { [100] = "DKP", [99] = "MS (Main Spec)", [98] = "OS (Off Spec)", [97] = "DE (Disenchant)" }
+local CategoryNames = { [100] = "DKP", [99] = "MS", [98] = "OS", [97] = "DE" }
 
 -- Create a safe pattern from the game's own roll string
 -- This handles "Secret Strings" and different languages automatically
@@ -119,39 +122,10 @@ local function FormatLootLine(item)
 end
 
 local function RefreshAwardPanel(f)
-    local award = f.rightPanel.awardContent
+    local award = f.rightPanel.lootContent.awardContent
     if not award then return end
 
-    for _, cb in ipairs(award.checkboxes) do
-        cb:Hide()
-        cb:SetChecked(false)
-    end
-
-    local rollers = RollLog[100] or {}
-    table.sort(rollers, function(a, b)
-        local dkpA = DB.DKPValues[a.name] or 0
-        local dkpB = DB.DKPValues[b.name] or 0
-        if dkpA ~= dkpB then
-            return dkpA > dkpB
-        end
-        return a.value > b.value
-    end)
-
-    local y = 0
-    for i, entry in ipairs(rollers) do
-        local cb = award.checkboxes[i] or CreateFrame("CheckButton", nil, award.scrollChild, "UICheckButtonTemplate")
-        cb:SetPoint("TOPLEFT", 0, -y)
-        cb:Show()
-        cb.playerName = entry.name
-        cb.text = cb.text or cb:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        cb.text:SetPoint("LEFT", cb, "RIGHT", 5, 0)
-        cb.text:SetText(string.format("%s | Roll: %d | DKP: %d", entry.name, entry.value, DB.DKPValues[entry.name] or 0))
-        award.checkboxes[i] = cb
-        y = y + 24
-    end
-
-    award.scrollChild:SetHeight(math.max(1, y))
-    award.emptyText:SetShown(#rollers == 0)
+    --award.statusText:SetText("Select winners from the left roller list, then click Award Winners.")
 end
 
 local function RefreshExportPanel(f)
@@ -174,7 +148,7 @@ local function SaveRollMenuPosition(frame)
 end
 
 function CreateRollMenu()
-    if RollMenuFrame then
+    if RollMenuFrame and type(RollMenuFrame.ShowRightTab) == "function" then
         RollMenuFrame:Show()
         RollMenuFrame:RefreshResults()
         RollMenuFrame:RefreshLootPanel()
@@ -182,6 +156,7 @@ function CreateRollMenu()
         return
     end
 
+    RollMenuFrame = nil
     local f = CreateFrame("Frame", "RollMenuFrame", UIParent, "BackdropTemplate")
     f:SetSize(840, 560)
     if DB and DB.WindowPosition then
@@ -255,11 +230,11 @@ function CreateRollMenu()
     leftPanel.content = trackerContent
     leftPanel.rows = {}
 
-    local tabNames = { "Loot", "Import", "Export", "Settings" }
+    local tabNames = { "Loot", "Import", "Export", "History", "Settings" }
     for i, name in ipairs(tabNames) do
         local btn = CreateFrame("Button", nil, rightPanel, "UIPanelButtonTemplate")
-        btn:SetSize(90, 22)
-        btn:SetPoint("TOPLEFT", 10 + ((i - 1) * 95), -10)
+        btn:SetSize(75, 22)
+        btn:SetPoint("TOPLEFT", 10 + ((i - 1) * 80), -10)
         btn:SetText(name)
         btn:SetScript("OnClick", function() f:ShowRightTab(name) end)
         rightPanel[name .. "Tab"] = btn
@@ -276,6 +251,7 @@ function CreateRollMenu()
     rightPanel.lootContent = createRightContent()
     rightPanel.importContent = createRightContent()
     rightPanel.exportContent = createRightContent()
+    rightPanel.historyContent = createRightContent()
     rightPanel.settingsContent = createRightContent()
 
     do
@@ -306,13 +282,19 @@ function CreateRollMenu()
 
         local awardHeader = lootPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         awardHeader:SetPoint("TOPLEFT", lootPanel.scroll, "BOTTOMLEFT", 0, -10)
-        awardHeader:SetText("Award DKP Winners")
+        awardHeader:SetText("Award Winners")
 
         local awardContent = CreateFrame("Frame", nil, lootPanel)
         awardContent:SetPoint("TOPLEFT", awardHeader, "BOTTOMLEFT", 0, -10)
         awardContent:SetSize(380, 100)
         awardContent.diffBtns = {}
         awardContent.typeBtns = {}
+
+        --awardContent.statusText = awardContent:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        --awardContent.statusText:SetPoint("TOPLEFT", 0, 0)
+        --awardContent.statusText:SetWidth(360)
+        --awardContent.statusText:SetJustifyH("LEFT")
+        --awardContent.statusText:SetText("Select winners from the left roller list, then click Award Winners.")
 
         for i, d in ipairs({ "Normal", "Heroic", "Mythic" }) do
             local b = CreateFrame("Button", nil, awardContent, "UIPanelButtonTemplate")
@@ -345,28 +327,40 @@ function CreateRollMenu()
         local awardButton = CreateFrame("Button", nil, awardContent, "UIPanelButtonTemplate")
         awardButton:SetSize(160, 24)
         awardButton:SetPoint("BOTTOMLEFT", 0, 0)
-        awardButton:SetText("Award & Deduct")
+        awardButton:SetText("Award Winners")
         awardButton:SetScript("OnClick", function()
+            if not CurrentLootItem then return end
             local cost = DB.Costs[currentDiff][currentType]
             local selected = {}
             for _, row in ipairs(leftPanel.rows) do
                 if row.checkbox and row.checkbox:IsShown() and row.checkbox:GetChecked() then
-                    table.insert(selected, row.playerName)
+                    table.insert(selected, { name = row.playerName, high = row.high })
                 end
             end
-            for _, name in ipairs(selected) do
-                DB.DKPValues[name] = (DB.DKPValues[name] or 0) - cost
-                table.insert(DB.AwardHistory, { name = name, diff = currentDiff, type = currentType, cost = cost })
+            if #selected == 0 then
+                return
             end
-            if #selected > 0 then
-                for _, row in ipairs(leftPanel.rows) do
-                    if row.checkbox and row.checkbox:IsShown() then
-                        row.checkbox:SetChecked(false)
-                    end
+
+            for _, sel in ipairs(selected) do
+                table.insert(DB.WinnerHistory, { name = sel.name, itemName = CurrentLootItem.name, itemLink = CurrentLootItem.link, itemTexture = CurrentLootItem.texture, rollType = CategoryNames[sel.high] })
+                if sel.high == 100 then
+                    DB.DKPValues[sel.name] = (DB.DKPValues[sel.name] or 0) - cost
+                    table.insert(DB.AwardHistory, { name = sel.name, diff = currentDiff, type = currentType, cost = cost })
+                end
+                local channel = GetAnnounceChannel()
+                SendChatMessage(string.format("%s won %s", sel.name, CurrentLootItem.link or CurrentLootItem.name), channel)
+            end
+
+            for _, row in ipairs(leftPanel.rows) do
+                if row.checkbox and row.checkbox:IsShown() then
+                    row.checkbox:SetChecked(false)
                 end
             end
+            RollLog = { [100] = {}, [99] = {}, [98] = {}, [97] = {} }
+            CurrentLootItem = nil
             f:RefreshResults()
-            f:RefreshAwardPanel()
+            f:RefreshLootPanel()
+            f:RefreshHistoryPanel()
         end)
 
         lootPanel.awardContent = awardContent
@@ -482,6 +476,24 @@ function CreateRollMenu()
             rowY = rowY - 30
         end
 
+        local autoOpenCheck = CreateFrame("CheckButton", nil, settingsPanel, "UICheckButtonTemplate")
+        autoOpenCheck:SetPoint("TOPLEFT", 0, rowY)
+        autoOpenCheck:SetSize(20, 20)
+        autoOpenCheck:SetChecked(DB.AutoOpenLootWindow)
+        autoOpenCheck.text = autoOpenCheck.text or autoOpenCheck:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        autoOpenCheck.text:SetPoint("LEFT", autoOpenCheck, "RIGHT", 5, 0)
+        autoOpenCheck.text:SetText("Auto-open tracker on loot")
+        rowY = rowY - 30
+
+        local autoPlaceCheck = CreateFrame("CheckButton", nil, settingsPanel, "UICheckButtonTemplate")
+        autoPlaceCheck:SetPoint("TOPLEFT", 0, rowY)
+        autoPlaceCheck:SetSize(20, 20)
+        autoPlaceCheck:SetChecked(DB.AutoPlaceTradeItem)
+        autoPlaceCheck.text = autoPlaceCheck.text or autoPlaceCheck:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        autoPlaceCheck.text:SetPoint("LEFT", autoPlaceCheck, "RIGHT", 5, 0)
+        autoPlaceCheck.text:SetText("Auto-place winner item when trade opens")
+        rowY = rowY - 30
+
         local saveBtn = CreateFrame("Button", nil, settingsPanel, "UIPanelButtonTemplate")
         saveBtn:SetSize(80, 24)
         saveBtn:SetPoint("BOTTOMLEFT", 0, 0)
@@ -490,7 +502,32 @@ function CreateRollMenu()
             for _, eb in ipairs(editBoxes) do
                 DB.Costs[eb.diff][eb.key] = tonumber(eb.edit:GetText()) or DB.Costs[eb.diff][eb.key]
             end
-            print("|cffffff00DKP Settings:|r Costs updated.")
+            DB.AutoOpenLootWindow = autoOpenCheck:GetChecked()
+            DB.AutoPlaceTradeItem = autoPlaceCheck:GetChecked()
+            print("|cffffff00DKP Settings:|r Costs updated. Auto-open on loot is " .. (DB.AutoOpenLootWindow and "enabled." or "disabled.") .. " Auto-place trade items is " .. (DB.AutoPlaceTradeItem and "enabled." or "disabled."))
+        end)
+    end
+
+    do
+        local historyPanel = rightPanel.historyContent
+        local title = historyPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOPLEFT", 0, 0)
+        title:SetText("Winner History")
+        local scroll = CreateFrame("ScrollFrame", nil, historyPanel, "UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT", 0, -30)
+        scroll:SetSize(380, 360)
+        local scrollChild = CreateFrame("Frame", nil, scroll)
+        scrollChild:SetSize(380, 1)
+        scroll:SetScrollChild(scrollChild)
+        historyPanel.scrollChild = scrollChild
+        historyPanel.historyRows = {}
+        local clearBtn = CreateFrame("Button", nil, historyPanel, "UIPanelButtonTemplate")
+        clearBtn:SetSize(120, 24)
+        clearBtn:SetPoint("BOTTOMLEFT", 0, 0)
+        clearBtn:SetText("Clear History")
+        clearBtn:SetScript("OnClick", function()
+            DB.WinnerHistory = {}
+            f:RefreshHistoryPanel()
         end)
     end
 
@@ -503,6 +540,7 @@ function CreateRollMenu()
         rightPanel.lootContent:Hide()
         rightPanel.importContent:Hide()
         rightPanel.exportContent:Hide()
+        rightPanel.historyContent:Hide()
         rightPanel.settingsContent:Hide()
         if rightPanel[name .. "Tab"] then
             rightPanel[name .. "Tab"]:LockHighlight()
@@ -514,6 +552,9 @@ function CreateRollMenu()
         elseif name == "Export" then
             rightPanel.exportContent:Show()
             f:RefreshExportPanel()
+        elseif name == "History" then
+            rightPanel.historyContent:Show()
+            f:RefreshHistoryPanel()
         elseif name == "Settings" then
             rightPanel.settingsContent:Show()
         end
@@ -584,6 +625,7 @@ function CreateRollMenu()
                     rr.checkbox:Show()
                     rr.checkbox:SetChecked(false)
                     rr.playerName = data.name
+                    rr.high = cat
                     rr.pText = rr.pText or rr:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
                     rr.pText:SetPoint("LEFT", 40, 0)
                     rr.rText = rr.rText or rr:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
@@ -682,7 +724,6 @@ function CreateRollMenu()
 
         lootPanel.scrollChild:SetHeight(math.max(1, y))
         lootPanel.emptyText:SetShown(#CurrentLoot == 0)
-        f:RefreshAwardPanel()
     end
 
     function f:RefreshAwardPanel()
@@ -691,6 +732,60 @@ function CreateRollMenu()
 
     function f:RefreshExportPanel()
         RefreshExportPanel(self)
+    end
+
+    local function RefreshHistoryPanel(f)
+        local history = f.rightPanel.historyContent
+        if not history then return end
+
+        for _, row in ipairs(history.historyRows) do
+            row:Hide()
+        end
+
+        local y = 0
+        for i, entry in ipairs(DB.WinnerHistory) do
+            local row = history.historyRows[i] or CreateFrame("Frame", nil, history.scrollChild)
+            row:SetSize(380, 40)
+            row:SetPoint("TOPLEFT", 0, -y)
+            row:Show()
+            row.icon = row.icon or row:CreateTexture(nil, "ARTWORK")
+            row.icon:SetSize(32, 32)
+            row.icon:SetPoint("LEFT", 0, 0)
+            row.icon:SetTexture(entry.itemTexture or 134400)
+            row.icon:SetScript("OnEnter", function()
+                GameTooltip:SetOwner(row.icon, "ANCHOR_TOP")
+                if entry.itemLink then
+                    GameTooltip:SetHyperlink(entry.itemLink)
+                end
+                GameTooltip:Show()
+            end)
+            row.icon:SetScript("OnLeave", function()
+                GameTooltip:Hide()
+            end)
+            row.itemText = row.itemText or row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            row.itemText:SetPoint("LEFT", row.icon, "RIGHT", 10, 0)
+            row.itemText:SetWidth(170)
+            row.itemText:SetJustifyH("LEFT")
+            row.itemText:SetText(entry.itemName or "")
+            row.nameText = row.nameText or row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            row.nameText:SetPoint("LEFT", row.itemText, "RIGHT", 10, 0)
+            row.nameText:SetWidth(120)
+            row.nameText:SetJustifyH("LEFT")
+            row.nameText:SetText(entry.name)
+            row.typeText = row.typeText or row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            row.typeText:SetPoint("LEFT", row.nameText, "RIGHT", 10, 0)
+            row.typeText:SetWidth(80)
+            row.typeText:SetJustifyH("LEFT")
+            row.typeText:SetText(entry.rollType or "")
+            history.historyRows[i] = row
+            y = y + 42
+        end
+
+        history.scrollChild:SetHeight(math.max(1, y))
+    end
+
+    function f:RefreshHistoryPanel()
+        RefreshHistoryPanel(self)
     end
 
     local bClr = CreateFrame("Button", nil, leftPanel, "UIPanelButtonTemplate")
@@ -706,6 +801,7 @@ function CreateRollMenu()
     f:ShowRightTab("Loot")
     f:RefreshResults()
     f:RefreshLootPanel()
+    f:RefreshHistoryPanel()
     f:Show()
 end
 

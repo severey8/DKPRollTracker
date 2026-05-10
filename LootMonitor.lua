@@ -68,27 +68,27 @@ local function IsItemLinkTradable(itemLink)
         return false
     end
 
-    local itemID = tonumber(string.match(itemLink, "item:(%d+)"))
-    local bindType = itemID and select(14, GetItemInfo(itemID))
-    if bindType == 4 or bindType == 5 or bindType == 7 or bindType == 8 or bindType == 9 then
-        return false
-    end
+    --local itemID = tonumber(string.match(itemLink, "item:(%d+)"))
+    --local bindType = itemID and select(14, GetItemInfo(itemID))
+    --if bindType == 4 or bindType == 5 or bindType == 7 or bindType == 8 or bindType == 9 then
+    --    return false
+    --end
 
-    if bindType == 1 then
-        return HasTradeTimeRemaining(itemLink)
-    end
+    --if bindType == 1 then
+    --    return HasTradeTimeRemaining(itemLink)
+    --end
 
     return true
 end
 
 local function IsBagItemTradable(info)
-    if not info or not info.hyperlink then
-        return false
-    end
+    --if not info or not info.hyperlink then
+    --    return false
+    --end
 
-    if info.isQuestItem or info.isBound or info.isSoulbound then
-        return false
-    end
+    --if info.isQuestItem or info.isBound or info.isSoulbound then
+    --    return false
+    --end
 
     return IsItemLinkTradable(info.hyperlink)
 end

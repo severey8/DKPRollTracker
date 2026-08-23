@@ -1,0 +1,9 @@
+## Interface: 120100
+## Title: DKP Roll Tracker
+## Notes: Popup roll menu for DKP / MS / OS / DE
+## Author: Steve
+## Version: 1.6
+## SavedVariables: DKPRollTrackerDB
+
+DKPRollTracker.lua
+LootMonitor.lua

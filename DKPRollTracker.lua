@@ -1,7 +1,10 @@
 local addonInitialized = false
-local DB = nil
+-- Shared with LootMonitor.lua: must be a global, not local to this chunk
+DB = nil
 RollMenuFrame = nil
 CurrentLootItem = nil
+-- Central shared loot table (owned by DKPRollTracker)
+CurrentLoot = CurrentLoot or {}
 
 -- Helper to strip server names and whitespace
 local function CleanName(name)
@@ -37,7 +40,6 @@ addonLoaded:SetScript("OnEvent", function(self, event, name)
     }
     DB.WindowPosition = DB.WindowPosition or { point = "CENTER", relativePoint = "CENTER", x = 0, y = 0 }
     DB.AutoOpenLootWindow = DB.AutoOpenLootWindow or false
-    DB.AutoPlaceTradeItem = DB.AutoPlaceTradeItem or false
     addonInitialized = true
 end)
 
@@ -55,7 +57,16 @@ local rollFrame = CreateFrame("Frame")
 rollFrame:RegisterEvent("CHAT_MSG_SYSTEM")
 rollFrame:SetScript("OnEvent", function(_, _, msg)
     if not msg then return end
-    
+
+    -- CORRECT MODERN RETAIL API CHECKS
+    -- 1) If the global `issecretvalue` exists and flags this msg, check access
+    if issecretvalue and issecretvalue(msg) then
+        -- 2) If the global `canaccessvalue` exists and denies access, bail out
+        if canaccessvalue and not canaccessvalue(msg) then
+            return
+        end
+    end
+
     -- Use the raw msg directly with string.match to avoid secret string errors
     local player, roll, low, high = string.match(msg, rollPattern)
     
@@ -102,7 +113,10 @@ local function ConsumeLootItem(index)
             table.insert(newLoot, entry)
         end
     end
-    CurrentLoot = newLoot
+    -- Preserve shared `CurrentLoot` table reference: wipe and refill
+    if not CurrentLoot then CurrentLoot = {} end
+    for k in pairs(CurrentLoot) do CurrentLoot[k] = nil end
+    for _, v in ipairs(newLoot) do table.insert(CurrentLoot, v) end
 end
 
 local function RemoveLootItem(index)
@@ -485,15 +499,6 @@ function CreateRollMenu()
         autoOpenCheck.text:SetText("Auto-open tracker on loot")
         rowY = rowY - 30
 
-        local autoPlaceCheck = CreateFrame("CheckButton", nil, settingsPanel, "UICheckButtonTemplate")
-        autoPlaceCheck:SetPoint("TOPLEFT", 0, rowY)
-        autoPlaceCheck:SetSize(20, 20)
-        autoPlaceCheck:SetChecked(DB.AutoPlaceTradeItem)
-        autoPlaceCheck.text = autoPlaceCheck.text or autoPlaceCheck:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        autoPlaceCheck.text:SetPoint("LEFT", autoPlaceCheck, "RIGHT", 5, 0)
-        autoPlaceCheck.text:SetText("Auto-place winner item when trade opens")
-        rowY = rowY - 30
-
         local saveBtn = CreateFrame("Button", nil, settingsPanel, "UIPanelButtonTemplate")
         saveBtn:SetSize(80, 24)
         saveBtn:SetPoint("BOTTOMLEFT", 0, 0)
@@ -503,8 +508,7 @@ function CreateRollMenu()
                 DB.Costs[eb.diff][eb.key] = tonumber(eb.edit:GetText()) or DB.Costs[eb.diff][eb.key]
             end
             DB.AutoOpenLootWindow = autoOpenCheck:GetChecked()
-            DB.AutoPlaceTradeItem = autoPlaceCheck:GetChecked()
-            print("|cffffff00DKP Settings:|r Costs updated. Auto-open on loot is " .. (DB.AutoOpenLootWindow and "enabled." or "disabled.") .. " Auto-place trade items is " .. (DB.AutoPlaceTradeItem and "enabled." or "disabled."))
+            print("|cffffff00DKP Settings:|r Costs updated. Auto-open on loot is " .. (DB.AutoOpenLootWindow and "enabled." or "disabled."))
         end)
     end
 
@@ -803,7 +807,18 @@ function CreateRollMenu()
     f:RefreshLootPanel()
     f:RefreshHistoryPanel()
     f:Show()
+    -- If LootMonitor queued an update before this UI was available, apply it now
+    if PendingLootUpdate and UpdateLootList then
+        UpdateLootList()
+    end
 end
+
+---------------------------------------------------------
+-- Automatic Loot Window Activation is handled by LootMonitor.lua's
+-- START_LOOT_ROLL handler (the correct, reliable trigger for a roll
+-- actually starting), which calls UpdateLootList() when
+-- DB.AutoOpenLootWindow is true.
+---------------------------------------------------------
 
 SLASH_DKPROLL1 = "/dkp"
 SlashCmdList["DKPROLL"] = CreateRollMenu

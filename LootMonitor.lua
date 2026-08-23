@@ -1,4 +1,5 @@
-CurrentLoot = {}
+-- Use the tracker's global `CurrentLoot` table; do not reassign it here
+CurrentLoot = CurrentLoot or {}
 
 function GetAnnounceChannel()
     return (IsInRaid() and "RAID") or (IsInGroup() and "PARTY") or "SAY"
@@ -122,7 +123,7 @@ local function GetContainerItemLinkSafe(bag, slot)
 end
 
 local function GetItemIDFromLink(link)
-    return link and tonumber(string.match(link, "item:(%d+):"))
+    return link and tonumber(string.match(link, "item:(%d+)"))
 end
 
 local function FindBagSlotForItemLink(itemLink)
@@ -131,7 +132,7 @@ local function FindBagSlotForItemLink(itemLink)
     end
 
     local targetID = GetItemIDFromLink(itemLink)
-    for bag = 0, 4 do
+    for bag = 0, 5 do
         for slot = 1, C_Container.GetContainerNumSlots(bag) do
             local link = GetContainerItemLinkSafe(bag, slot)
             if link then
@@ -157,12 +158,12 @@ local function AutoPlaceTradeItem(itemLink)
         ClearCursor()
     end
 
-    PickupContainerItem(bag, slot)
+    C_Container.PickupContainerItem(bag, slot)
     return true
 end
 
 local function AutoPlaceTradeHistoryItem()
-    if not DB or not DB.AutoPlaceTradeItem or not DB.WinnerHistory then
+    if not DB or not DB.WinnerHistory then
         return
     end
 
@@ -226,7 +227,8 @@ local function CollectEpicLoot(onlyTradable)
         end
     end
 
-    CurrentLoot = {}
+    if not CurrentLoot then CurrentLoot = {} end
+    for k in pairs(CurrentLoot) do CurrentLoot[k] = nil end
     for _, data in pairs(tempLoot) do table.insert(CurrentLoot, data) end
 
     if not foundAny and not onlyTradable then
@@ -241,6 +243,12 @@ local function CollectEpicLoot(onlyTradable)
 end
 
 function UpdateLootList()
+    -- If the main UI hasn't loaded yet, mark a pending update so the tracker can apply it later
+    if type(CreateRollMenu) ~= "function" then
+        PendingLootUpdate = true
+        return
+    end
+    PendingLootUpdate = nil
     RefreshLootWindow()
 end
 
@@ -272,6 +280,39 @@ local function GenerateTestRollData()
     }
 end
 
+local function DumpLootRollAPI(rollID)
+    print(string.format("|cff33ccff[DKPDEBUG]|r --- rollID=%s ---", tostring(rollID)))
+
+    local itemLink = GetLootRollItemLink and GetLootRollItemLink(rollID)
+    print(string.format("|cff33ccff[DKPDEBUG]|r GetLootRollItemLink -> %s", tostring(itemLink)))
+
+    local raw = { GetLootRollItemInfo(rollID) }
+    print(string.format("|cff33ccff[DKPDEBUG]|r GetLootRollItemInfo numReturns=%d", #raw))
+    for i, v in ipairs(raw) do
+        print(string.format("|cff33ccff[DKPDEBUG]|r   ret[%d] type=%s value=%s", i, type(v), tostring(v)))
+        if type(v) == "table" then
+            for k2, v2 in pairs(v) do
+                print(string.format("|cff33ccff[DKPDEBUG]|r     [%s]=%s", tostring(k2), tostring(v2)))
+            end
+        end
+    end
+end
+
+SLASH_DKPTESTAPILOOT1 = "/dkptestapiloot"
+SlashCmdList["DKPTESTAPILOOT"] = function(msg)
+    local rollID = tonumber(msg)
+    if rollID then
+        DumpLootRollAPI(rollID)
+        return
+    end
+
+    local activeRolls = GetActiveLootRollIDs and GetActiveLootRollIDs() or {}
+    print(string.format("|cff33ccff[DKPDEBUG]|r no rollID given; active roll count=%d", #activeRolls))
+    for _, id in ipairs(activeRolls) do
+        DumpLootRollAPI(id)
+    end
+end
+
 SLASH_DKPTEST1 = "/dkptest"
 SlashCmdList["DKPTEST"] = function()
     print("|cffffff00DKP DEBUG:|r Running DKP loot + test data generation...")
@@ -284,29 +325,44 @@ SlashCmdList["DKPTEST"] = function()
     end
 end
 
-local e = CreateFrame("Frame")
-e:RegisterEvent("LOOT_OPENED")
-e:RegisterEvent("TRADE_SHOW")
-e:SetScript("OnEvent", function(_, event)
-    if event == "LOOT_OPENED" then
-        local tempLoot = {}
-        for i = 1, GetNumLootItems() do
-            local texture, name, _, _, rarity = GetLootSlotInfo(i)
-            local link = GetLootSlotLink(i)
-            if rarity and rarity >= 4 and name and link and IsItemLinkTradable(link) then
-                if tempLoot[name] then
-                    tempLoot[name].count = tempLoot[name].count + 1
-                else
-                    tempLoot[name] = { name = name, link = link, texture = texture, count = 1 }
-                end
+local function RefreshActiveLootRolls()
+    -- Populate CurrentLoot from active roll IDs (group loot roll window)
+    local tempLoot = {}
+    local activeRolls = GetActiveLootRollIDs and GetActiveLootRollIDs() or {}
+
+    for _, rollID in ipairs(activeRolls) do
+        local itemLink = GetLootRollItemLink and GetLootRollItemLink(rollID)
+        if itemLink then
+            -- NOTE: do not guard this call with `GetLootRollItemInfo and ...` —
+            -- Lua's `and`/`or` collapse a multi-return call to a single value,
+            -- which silently truncated every field after `texture` to nil.
+            local texture, name, count, quality = GetLootRollItemInfo(rollID)
+            if quality and quality >= 4 then
+                local itemName = name or (GetItemInfo and GetItemInfo(itemLink)) or itemLink:match("%[(.-)%]")
+                table.insert(tempLoot, { name = itemName, link = itemLink, texture = texture, count = count or 1, rollID = rollID })
             end
         end
-        CurrentLoot = {}
-        for _, data in pairs(tempLoot) do table.insert(CurrentLoot, data) end
-        if #CurrentLoot > 0 and ((RollMenuFrame and RollMenuFrame:IsShown()) or (DB and DB.AutoOpenLootWindow)) then
-            UpdateLootList()
-        end
-    elseif event == "TRADE_SHOW" then
+    end
+
+    if not CurrentLoot then CurrentLoot = {} end
+    for k in pairs(CurrentLoot) do CurrentLoot[k] = nil end
+    for _, data in ipairs(tempLoot) do table.insert(CurrentLoot, data) end
+
+    if #CurrentLoot > 0 and ((RollMenuFrame and RollMenuFrame:IsShown()) or (DB and DB.AutoOpenLootWindow)) then
+        UpdateLootList()
+    end
+end
+
+local e = CreateFrame("Frame")
+e:RegisterEvent("START_LOOT_ROLL")
+e:RegisterEvent("TRADE_SHOW")
+e:SetScript("OnEvent", function(_, event)
+    if event == "TRADE_SHOW" then
         AutoPlaceTradeHistoryItem()
+    elseif event == "START_LOOT_ROLL" then
+        -- Defer by one frame: GetActiveLootRollIDs() can briefly be empty
+        -- at the exact instant START_LOOT_ROLL fires, before the roll is
+        -- fully registered client-side.
+        C_Timer.After(0, RefreshActiveLootRolls)
     end
 end)

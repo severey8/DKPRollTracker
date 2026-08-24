@@ -98,6 +98,15 @@ local function NormalizeName(name)
     if not name then
         return nil
     end
+
+    -- name (from TradeFrameRecipientName/UnitName) can come back as a secret
+    -- string under taint; bail out rather than indexing it directly.
+    if issecretvalue and issecretvalue(name) then
+        if canaccessvalue and not canaccessvalue(name) then
+            return nil
+        end
+    end
+
     local cleanName = name:match("^(.-)%-") or name
     return cleanName:gsub("^%l", string.upper)
 end

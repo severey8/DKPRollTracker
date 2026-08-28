@@ -148,7 +148,7 @@ local function RefreshExportPanel(f)
 
     local output = ""
     for _, entry in ipairs(DB.AwardHistory or {}) do
-        output = output .. string.format("%s, %s, %s, %d\n", entry.name, entry.diff, entry.type, entry.cost)
+        output = output .. string.format("%s\t%s\t%s\t%s\t%d\n", entry.date or "", entry.name, entry.diff, entry.type, entry.cost)
     end
     export.editBox:SetText(output == "" and "No items awarded yet." or output)
 end
@@ -361,7 +361,7 @@ function CreateRollMenu()
                 table.insert(DB.WinnerHistory, { name = sel.name, itemName = awardedItem.name, itemLink = awardedItem.link, itemTexture = awardedItem.texture, rollType = CategoryNames[sel.high] })
                 if sel.high == 100 then
                     DB.DKPValues[sel.name] = (DB.DKPValues[sel.name] or 0) - cost
-                    table.insert(DB.AwardHistory, { name = sel.name, diff = currentDiff, type = currentType, cost = cost })
+                    table.insert(DB.AwardHistory, { name = sel.name, diff = currentDiff, type = currentType, cost = cost, date = date("%Y-%m-%d") })
                 end
                 table.insert(winners, { name = sel.name, rollType = CategoryNames[sel.high] })
                 local channel = GetAnnounceChannel()
@@ -391,7 +391,7 @@ function CreateRollMenu()
         title:SetText("Import DKP Values")
         local inst = importPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         inst:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
-        inst:SetText("Paste CSV: CharacterName,DKPBalance (one per line)")
+        inst:SetText("Paste CSV or Google Sheets: CharacterName,DKPBalance (one per line)")
         local scroll = CreateFrame("ScrollFrame", nil, importPanel, "UIPanelScrollFrameTemplate")
         scroll:SetPoint("TOPLEFT", 0, -40)
         scroll:SetSize(380, 320)
@@ -408,8 +408,9 @@ function CreateRollMenu()
         importBtn:SetScript("OnClick", function()
             local count = 0
             for line in edit:GetText():gmatch("[^\r\n]+") do
-                local n, v = line:match("^%s*([^,]+)%s*,%s*(%-?%d+)%s*$")
-                if n and v then
+                local normalized = line:gsub("[,\t]", " ")
+                local n, v = normalized:match("^%s*(.-)%s+(%-?%d+)%s*$")
+                if n and v and n ~= "" then
                     DB.DKPValues[CleanName(n)] = tonumber(v)
                     count = count + 1
                 end

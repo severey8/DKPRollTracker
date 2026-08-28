@@ -7,3 +7,4 @@
 
 DKPRollTracker.lua
 LootMonitor.lua
+RaidMemberView.lua

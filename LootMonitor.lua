@@ -261,8 +261,8 @@ function UpdateLootList()
     RefreshLootWindow()
 end
 
-SLASH_DKPLOOT1 = "/dkploot"
-SlashCmdList["DKPLOOT"] = function()
+SLASH_DKPTRACKER1 = "/dkptracker"
+SlashCmdList["DKPTRACKER"] = function()
     print("|cffffff00DKP DEBUG:|r Scanning bags for tradable Epic items...")
     CollectEpicLoot(true)
     UpdateLootList()

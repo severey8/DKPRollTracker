@@ -355,14 +355,17 @@ function CreateRollMenu()
                 return
             end
 
+            local awardedItem = CurrentLootItem
+            local winners = {}
             for _, sel in ipairs(selected) do
-                table.insert(DB.WinnerHistory, { name = sel.name, itemName = CurrentLootItem.name, itemLink = CurrentLootItem.link, itemTexture = CurrentLootItem.texture, rollType = CategoryNames[sel.high] })
+                table.insert(DB.WinnerHistory, { name = sel.name, itemName = awardedItem.name, itemLink = awardedItem.link, itemTexture = awardedItem.texture, rollType = CategoryNames[sel.high] })
                 if sel.high == 100 then
                     DB.DKPValues[sel.name] = (DB.DKPValues[sel.name] or 0) - cost
                     table.insert(DB.AwardHistory, { name = sel.name, diff = currentDiff, type = currentType, cost = cost })
                 end
+                table.insert(winners, { name = sel.name, rollType = CategoryNames[sel.high] })
                 local channel = GetAnnounceChannel()
-                SendChatMessage(string.format("%s won %s", sel.name, CurrentLootItem.link or CurrentLootItem.name), channel)
+                SendChatMessage(string.format("%s won %s", sel.name, awardedItem.link or awardedItem.name), channel)
             end
 
             for _, row in ipairs(leftPanel.rows) do
@@ -372,6 +375,7 @@ function CreateRollMenu()
             end
             RollLog = { [100] = {}, [99] = {}, [98] = {}, [97] = {} }
             CurrentLootItem = nil
+            if BroadcastRollAward then BroadcastRollAward(awardedItem, winners) end
             f:RefreshResults()
             f:RefreshLootPanel()
             f:RefreshHistoryPanel()
@@ -716,6 +720,7 @@ function CreateRollMenu()
                 SendChatMessage("Main Spec: /roll 99", channel)
                 SendChatMessage("Off Spec: /roll 98", channel)
                 SendChatMessage("Disenchant: /roll 97", channel)
+                if BroadcastRollStart then BroadcastRollStart(CurrentLootItem) end
             end)
 
             row.remove:SetScript("OnClick", function()
